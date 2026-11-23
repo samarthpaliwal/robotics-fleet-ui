@@ -4,7 +4,7 @@
  * History stored in a ref (not state) to avoid extra re-renders.
  */
 
-import React, { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 interface Props {
   current: number;

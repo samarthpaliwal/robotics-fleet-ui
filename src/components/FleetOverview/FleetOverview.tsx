@@ -1,4 +1,4 @@
-import React, { useMemo } from "react";
+import { useMemo } from "react";
 import { useRobotStore } from "../../store/RobotContext";
 import { useThrottledRobots } from "../../hooks/useThrottledRobots";
 import { RobotCard } from "./RobotCard";

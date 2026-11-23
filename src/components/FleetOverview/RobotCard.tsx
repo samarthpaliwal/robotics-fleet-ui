@@ -1,4 +1,4 @@
-import React, { memo } from "react";
+import { memo } from "react";
 import type { RobotTelemetry, RobotStatus } from "../../types/robot";
 
 const STATUS_COLORS: Record<RobotStatus, string> = {
