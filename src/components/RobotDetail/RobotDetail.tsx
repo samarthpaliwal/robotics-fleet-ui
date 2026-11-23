@@ -1,4 +1,4 @@
-import React, { memo } from "react";
+import { memo } from "react";
 import { useRobotStore } from "../../store/RobotContext";
 import { BatteryChart } from "./BatteryChart";
 import { CommandPanel } from "../CommandPanel/CommandPanel";

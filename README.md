@@ -1,13 +1,61 @@
-# FleetOS: Real-Time Robotics Fleet Command Interface
+# FleetOS
 
-FleetOS is a fleet command dashboard for autonomous robots, built with React 18, TypeScript and Vite. A small Node.js WebSocket server simulates 50 robots and streams telemetry (battery, temperature, position, velocity, status) to the browser roughly five times per second per robot. The UI shows the fleet as a card grid, lets you open a live detail panel with a battery history chart for one robot, and sends START / STOP / RETURN_TO_BASE / EMERGENCY_STOP commands back over the same socket with optimistic updates and server acknowledgements.
+A real-time command dashboard for a simulated fleet of 50 robots, each streaming telemetry at 5 Hz over one WebSocket.
 
-## Requirements
+[![CI](https://github.com/samarthpaliwal/robotics-fleet-ui/actions/workflows/ci.yml/badge.svg)](https://github.com/samarthpaliwal/robotics-fleet-ui/actions/workflows/ci.yml)
+![License: MIT](https://img.shields.io/badge/license-MIT-blue)
+![TypeScript](https://img.shields.io/badge/TypeScript-strict-3178C6?logo=typescript&logoColor=white)
 
-- Node.js 18 or newer and npm
-- Two terminal windows (one for the simulation server, one for the Vite dev server)
+![The FleetOS dashboard showing 50 robot cards, error-state robots first](docs/dashboard.png)
 
-## Setup
+## Problem
+
+Fifty robots at five updates a second is about 250 messages a second arriving at one browser tab. Render
+on every message and the UI spends its time repainting; wait for the server before showing a command and
+the operator's controls feel dead. The connection will also drop, and the dashboard has to recover without
+a reload.
+
+## Approach
+
+```mermaid
+flowchart LR
+    sim["Simulation server<br/>Node + ws · 50 robots · 5 Hz each"] -->|telemetry| svc["WebSocketService<br/>parse · validate · heartbeat · backoff"]
+    svc --> store["Store<br/>Context + useReducer<br/>robots keyed by id"]
+    store --> thr["useThrottledRobots<br/>snapshot every 100 ms"]
+    thr --> grid["Fleet grid<br/>memoised RobotCard"]
+    store --> detail["Robot detail<br/>SVG battery chart"]
+    detail -->|command| store
+    store -->|optimistic update| grid
+    store -->|command| svc
+    svc -->|command| sim
+    sim -->|"ack after 200 to 500 ms"| svc
+```
+
+- **Normalised state.** Robots live in a map keyed by `robot_id`, so a telemetry message replaces one entry.
+- **Throttled rendering.** The grid reads a snapshot taken every 100 ms instead of re-rendering on each
+  message, and `RobotCard` is wrapped in `React.memo` so one robot's update does not repaint the others.
+- **Optimistic commands.** START, STOP, RETURN_TO_BASE and EMERGENCY_STOP set the expected status
+  immediately and mark the card pending; the server's acknowledgement clears it.
+- **A socket that recovers.** A framework-free `WebSocketService` owns the connection: JSON validation, a
+  15 s heartbeat, and reconnection with exponential backoff (1 s base, 30 s cap, up to 500 ms jitter).
+- **No charting library.** The battery history is a hand-written SVG path over the last 30 readings.
+
+The server staggers each robot's timer (200 ms plus 4 ms per robot) so broadcasts are spread out rather
+than arriving in bursts.
+
+## Results
+
+- 50 robots at 5 Hz each, about 250 telemetry messages a second, rendered at about 10 frames a second by
+  the throttled snapshot. These are the simulator's configured rates, not a benchmark.
+- Stopping and restarting the server reconnects the dashboard without a reload.
+- Production bundle: 155 kB of JavaScript (50 kB gzipped). Runtime dependencies are React and React DOM only.
+
+Limits: commands are acknowledged by the simulator but do not change the simulated robot's state on the
+server, and there are no automated tests yet; CI type-checks and builds.
+
+## Quick start
+
+Requires Node.js 18 or newer.
 
 ```bash
 git clone https://github.com/samarthpaliwal/robotics-fleet-ui.git
@@ -15,78 +63,50 @@ cd robotics-fleet-ui
 npm install
 ```
 
-The frontend reads one optional environment variable at build time:
-
-| Variable | Default | Purpose |
-|---|---|---|
-| `VITE_WS_URL` | `ws://localhost:8080` | WebSocket URL the browser connects to (`src/hooks/useWebSocket.ts`). |
-
-Copy `.env.example` to `.env` if you need to point at a different server:
-
-```env
-# .env.example
-VITE_WS_URL=ws://localhost:8080
-```
-
-The simulation server's port (8080), robot count (50) and tick interval (200 ms) are constants at the top of `server/simulationServer.ts`.
-
-## Usage
-
-Terminal 1, start the simulation server:
+Terminal 1, the simulation server on `ws://localhost:8080`:
 
 ```bash
 npm run server
-# [Server] FleetOS simulation server running on ws://localhost:8080
-# [Server] Streaming 50 robots at 5Hz
 ```
 
-Terminal 2, start the frontend:
+Terminal 2, the dashboard on http://localhost:5173:
 
 ```bash
 npm run dev
 ```
 
-Open http://localhost:5173. The header shows the connection state; the grid fills with 50 robot cards sorted with error-state robots first. Click a card to open the detail panel on the right, which shows live telemetry, a rolling 30-point battery chart and the command buttons. Issuing a command greys the card and shows a spinner until the server's acknowledgement arrives (200 to 500 ms later). Stopping and restarting the server demonstrates automatic reconnection with exponential backoff.
+Click a card to open the detail panel with live telemetry, the battery chart and the command buttons.
 
-Production build:
+Production build (type-check, then bundle to `dist/`):
 
 ```bash
-npm run build   # tsc && vite build, output in dist/
+npm run build
 ```
 
-## How it works
+To point the dashboard at another server, copy `.env.example` to `.env` and set `VITE_WS_URL`. The
+server's port, robot count and tick interval are constants at the top of `server/simulationServer.ts`.
 
-- `server/simulationServer.ts` creates a `ws` WebSocketServer on port 8080, initialises 50 robots with random state, and ticks each one on its own staggered `setInterval` (200 ms + 4 ms per robot) so broadcasts are spread out rather than bursty. Battery drains or charges slowly, status changes rarely at random, and robots below 15% battery switch to charging. It answers `ping` with `pong` and replies to `command` messages with an `ack` after a short random delay. Commands are acknowledged but do not change the simulated robot's state on the server.
-- `src/services/websocketService.ts` is a framework-free class that owns the socket: connect, JSON parsing and validation, a 15 s heartbeat ping, and reconnection with exponential backoff (1 s base, 30 s cap, up to 500 ms jitter).
-- `src/store/` holds global state in a React Context with `useReducer`. Robots are stored in a normalised `RobotMap` keyed by `robot_id`, so a telemetry update replaces one entry. `OPTIMISTIC_COMMAND` sets the expected status immediately and records a pending command; `COMMAND_ACK` clears it.
-- `src/hooks/useWebSocket.ts` wires the service to the store and registers the command sender. `src/hooks/useThrottledRobots.ts` snapshots the live map every 100 ms (about 10 fps) so the card grid does not re-render on every one of the ~250 telemetry messages per second.
-- `RobotCard` is wrapped in `React.memo` so one robot's update does not repaint the others. `BatteryChart` is a hand-written SVG path over the last 30 battery readings; there is no charting library.
+## Tech stack
 
-## Project layout
+React 18, TypeScript, Vite, Node.js, `ws`.
+
+## Project structure
 
 ```
 robotics-fleet-ui/
-├── server/
-│   └── simulationServer.ts   # ws-based telemetry simulator, port 8080
+├── server/simulationServer.ts     ws-based telemetry simulator, port 8080
 ├── src/
-│   ├── main.tsx              # React root wrapped in RobotProvider
-│   ├── App.tsx               # Header, fleet grid, optional detail panel
-│   ├── types/robot.ts        # Telemetry, command and message types
+│   ├── App.tsx                    header, fleet grid, optional detail panel
+│   ├── types/robot.ts             telemetry, command and message types
 │   ├── services/websocketService.ts
-│   ├── store/
-│   │   ├── RobotContext.tsx  # Context provider, issueCommand, selectRobot
-│   │   └── robotReducer.ts   # Normalised state + actions
-│   ├── hooks/
-│   │   ├── useWebSocket.ts
-│   │   └── useThrottledRobots.ts
-│   ├── components/
-│   │   ├── FleetOverview/    # Grid and RobotCard
-│   │   ├── RobotDetail/      # Detail panel and BatteryChart
-│   │   ├── CommandPanel/     # START / STOP / RETURN_TO_BASE / EMERGENCY_STOP
-│   │   └── ConnectionStatus/
-│   └── styles/global.css
+│   ├── store/                     RobotContext.tsx, robotReducer.ts
+│   ├── hooks/                     useWebSocket.ts, useThrottledRobots.ts
+│   └── components/
+│       ├── FleetOverview/         grid and RobotCard
+│       ├── RobotDetail/           detail panel and BatteryChart
+│       ├── CommandPanel/
+│       └── ConnectionStatus/
+├── docs/dashboard.png
 ├── .env.example
-├── index.html
-├── vite.config.ts            # dev server on port 5173
-└── tsconfig.json
+└── vite.config.ts
 ```

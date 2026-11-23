@@ -3,7 +3,7 @@ import { WebSocketService } from "../services/websocketService";
 import { useRobotStore } from "../store/RobotContext";
 import type { RobotCommand, CommandPayload } from "../types/robot";
 
-const WS_URL = (import.meta as { env: Record<string, string> }).env.VITE_WS_URL ?? "ws://localhost:8080";
+const WS_URL = import.meta.env.VITE_WS_URL ?? "ws://localhost:8080";
 
 export function useWebSocket(): void {
   const { dispatch, registerCommandSender } = useRobotStore();

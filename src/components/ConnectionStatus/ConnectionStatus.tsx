@@ -1,4 +1,4 @@
-import React, { memo } from "react";
+import { memo } from "react";
 import { useRobotStore } from "../../store/RobotContext";
 import type { ConnectionState } from "../../types/robot";
 

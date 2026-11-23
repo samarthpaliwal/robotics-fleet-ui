@@ -1,4 +1,3 @@
-import React from "react";
 import { useWebSocket } from "./hooks/useWebSocket";
 import { FleetOverview } from "./components/FleetOverview/FleetOverview";
 import { RobotDetail } from "./components/RobotDetail/RobotDetail";
